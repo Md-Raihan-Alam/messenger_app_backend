@@ -8,6 +8,13 @@
       "when": 1777466899493,
       "tag": "0000_powerful_viper",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1782912339006,
+      "tag": "0001_chief_random",
+      "breakpoints": true
     }
   ]
 }

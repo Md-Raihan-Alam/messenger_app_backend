@@ -3,6 +3,13 @@ import app from "../app.js";
 import { pool } from "../db/db.js";
 
 describe("Auth Routes", () => {
+  // Force the DB connection to establish BEFORE any timed test runs.
+  // On providers like Neon, the first connection can be slow (cold start),
+  // which was blowing past our 10s test timeout on the first real test.
+  beforeAll(async () => {
+    await pool.query("SELECT 1");
+  }, 30000);
+
   test("Should register a user", async () => {
     const username = `user_${Date.now()}`;
 
