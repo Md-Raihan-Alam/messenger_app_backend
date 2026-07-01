@@ -43,6 +43,43 @@ describe("Auth Routes", () => {
 
     expect(response.body.message).toBe("User logged out successfully");
   });
+
+  test("Should reject /me with no token", async () => {
+    const response = await request(app).get("/api/v1/auth/me");
+
+    expect(response.statusCode).toBe(401);
+
+    expect(response.body.message).toBe("Unauthorized: No token provided");
+  });
+
+  test("Should return current user with valid token", async () => {
+    const username = `me_${Date.now()}`;
+
+    // register
+    await request(app).post("/api/v1/auth/register").send({
+      username,
+      password: "123456",
+    });
+
+    // login to get the cookie
+    const loginResponse = await request(app).post("/api/v1/auth/login").send({
+      username,
+      password: "123456",
+    });
+
+    const cookies = loginResponse.headers["set-cookie"];
+
+    // hit /me with the cookie attached
+    const meResponse = await request(app)
+      .get("/api/v1/auth/me")
+      .set("Cookie", cookies);
+
+    expect(meResponse.statusCode).toBe(200);
+
+    expect(meResponse.body.user.username).toBe(username);
+
+    expect(meResponse.body.user.password).toBeUndefined();
+  }, 10000);
 });
 
 afterAll(async () => {
