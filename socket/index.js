@@ -114,6 +114,11 @@ export const initSocket = (httpServer) => {
         console.log(
           `Socket ${socket.id} joined ${conversationIds.length} conversation room(s)`
         );
+        // Tell THIS client their room setup is complete. Clients (and our
+        // tests) should wait for this event instead of guessing a delay —
+        // "connect" only means the handshake succeeded, not that room
+        // joins (which depend on an async DB query) have finished.
+        socket.emit("roomsReady");
       })
       .catch((e) => {
         console.error("Failed to join conversatinr rooms:", e);
