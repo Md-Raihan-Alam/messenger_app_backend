@@ -9,6 +9,15 @@ import { eq } from "drizzle-orm";
 // which is exactly why this maps to a Set, not a single socket.id.
 const onlineUsers = new Map();
 
+// Fetches every conversation this user belongs to, so we can join
+// their socket to each corresponding room on connect.
+const getUserConversationIds = async (userId) => {
+  const memeberships = await db.query.conversationMembers.findMany({
+    where: (cm, { eq: eqOp }) => eqOp(cm.userId, userId),
+  });
+  return memeberships.map((m) => m.conversationId);
+};
+
 // Initializes Socket.IO on top of the existing HTTP server.
 // Called once from index.js, right after the HTTP server is created.
 export const initSocket = (httpServer) => {
@@ -80,6 +89,29 @@ export const initSocket = (httpServer) => {
         }
       }
     });
+
+    // ─────────────────────────────────────────────
+    // ROOM JOINING
+    // socket.join(roomName) adds this socket to a room. A socket can be
+    // in many rooms at once. Rooms are entirely in-memory on the Socket.IO
+    // server — joining a room does NOT touch the database, it's purely
+    // about which sockets receive which broadcasts.
+    //
+    // We join one room per conversation this user belongs to, so that
+    // later, `io.to("conversation:7").emit(...)` reaches exactly the
+    // members of conversation 7 — no more, no less.
+    getUserConversationIds(userId)
+      .then((conversationIds) => {
+        conversationIds.forEach((conversationId) => {
+          socket.join(`conversation:${conversationId}`);
+        });
+        console.log(
+          `Socket ${socket.id} joined ${conversationIds.length} conversation room(s)`
+        );
+      })
+      .catch((e) => {
+        console.error("Failed to join conversatinr rooms:", e);
+      });
 
     // Only flip the DB flag to "online" on the user's FIRST active socket.
     // If they already had another tab/device connected, they were already
