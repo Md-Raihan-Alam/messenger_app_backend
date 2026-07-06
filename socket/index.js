@@ -9,6 +9,12 @@ import { eq } from "drizzle-orm";
 // which is exactly why this maps to a Set, not a single socket.id.
 const onlineUsers = new Map();
 
+// Holds the single io instance for the app's lifetime, set once by
+// initSocket(). Other modules (like message.service.js) retrieve it
+// via getIO() instead of importing initSocket directly — this avoids
+// circular imports and avoids threading `io` through every function call.
+let io;
+
 // Fetches every conversation this user belongs to, so we can join
 // their socket to each corresponding room on connect.
 const getUserConversationIds = async (userId) => {
@@ -21,7 +27,7 @@ const getUserConversationIds = async (userId) => {
 // Initializes Socket.IO on top of the existing HTTP server.
 // Called once from index.js, right after the HTTP server is created.
 export const initSocket = (httpServer) => {
-  const io = new Server(httpServer, {
+  io = new Server(httpServer, {
     cors: {
       origin: "*", // TODO: restrict this to your actual frontend origin in production
       credentials: true,
@@ -134,6 +140,17 @@ export const initSocket = (httpServer) => {
         });
     }
   });
+
+  return io;
+};
+
+// Returns the shared io instance. Throws clearly if called before
+// initSocket() has run, rather than failing with a confusing
+// "cannot call .to() of undefined" error somewhere else in the app.
+export const getIO = () => {
+  if (!io) {
+    throw new Error("Socket.IO has not been initialized yet");
+  }
 
   return io;
 };

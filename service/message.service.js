@@ -5,6 +5,7 @@ import {
   messageSeen,
 } from "../schemas/schema.js";
 import { eq, and } from "drizzle-orm";
+import { getIO } from "../socket/index.js";
 
 // Helper: confirms the requesting user is actually a member of the
 // conversation before letting them read or write to it.
@@ -48,6 +49,24 @@ export const sendMessage = async (req, res) => {
         content,
       })
       .returning();
+
+    // ─────────────────────────────────────────────
+    // BROADCAST
+    // io.to(roomName).emit(eventName, payload) sends this event to every
+    // socket currently in that room — i.e. every connected member of this
+    // conversation. Members who are offline simply don't receive it now;
+    // they'll see the message when they next fetch history over REST.
+    // This is fire-and-forget: we don't await any client acknowledgment,
+    // and a failure here should never fail the REST response, since the
+    // message is already safely persisted.
+    // ─────────────────────────────────────────────
+    try {
+      getIO().to(`conversation:${conversationId}`).emit("newMessage", message);
+    } catch (socketError) {
+      // Socket.IO not initialized, or some broadcast issue — log it,
+      // but don't fail the request. The message is already saved.
+      console.error("Failed to broadcast message via socket:", socketError);
+    }
 
     return res.status(201).json({
       message: "Message sent successfully",
