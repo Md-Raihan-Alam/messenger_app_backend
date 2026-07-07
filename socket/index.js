@@ -159,3 +159,30 @@ export const getIO = () => {
 
   return io;
 };
+
+// Joins ALL of a user's currently active sockets (they may have multiple —
+// phone + laptop, several tabs) to a given room, live, without requiring
+// a reconnect. Used when a user is added to a conversation mid-session
+// (e.g. added to a group chat while already connected).
+//
+// If the user has no active sockets right now (they're offline), this is
+// a no-op — when they eventually connect, initSocket's normal connection
+// handler will join them to ALL their conversations (including this new
+// one) automatically, since getUserConversationIds() re-queries the DB
+// fresh on every connect.
+export const joinUserToRoom = (userId, roomName) => {
+  const socketIds = onlineUsers.get(userId);
+  if (!socketIds || socketIds.size === 0) {
+    return; // user isn't currently connected — nothing to do right now
+  }
+  const socketsNamespace = getIO().sockets;
+  socketIds.forEach((socketId) => {
+    const socket = socketsNamespace.sockets.get(socketId);
+    if (socket) {
+      socket.join(roomName);
+    }
+  });
+  console.log(
+    `Joined ${socketIds.size} active socket(s) of user ${userId} to room ${roomName}`
+  );
+};
