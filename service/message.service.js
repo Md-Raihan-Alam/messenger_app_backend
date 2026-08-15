@@ -7,8 +7,6 @@ import {
 import { eq, and } from "drizzle-orm";
 import { getIO } from "../socket/index.js";
 
-// Helper: confirms the requesting user is actually a member of the
-// conversation before letting them read or write to it.
 const isConversationMember = async (conversationId, userId) => {
   const membership = await db.query.conversationMembers.findFirst({
     where: (cm, { eq: eqOp, and: andOp }) =>
@@ -18,10 +16,6 @@ const isConversationMember = async (conversationId, userId) => {
   return !!membership;
 };
 
-// Sends a message into a conversation.
-// This is called by the REST endpoint now, and will later also be
-// called from the Socket.IO "sendMessage" event handler — same
-// underlying DB write, two different entry points (HTTP vs socket).
 export const sendMessage = async (req, res) => {
   try {
     const senderId = req.userId;
@@ -50,21 +44,9 @@ export const sendMessage = async (req, res) => {
       })
       .returning();
 
-    // ─────────────────────────────────────────────
-    // BROADCAST
-    // io.to(roomName).emit(eventName, payload) sends this event to every
-    // socket currently in that room — i.e. every connected member of this
-    // conversation. Members who are offline simply don't receive it now;
-    // they'll see the message when they next fetch history over REST.
-    // This is fire-and-forget: we don't await any client acknowledgment,
-    // and a failure here should never fail the REST response, since the
-    // message is already safely persisted.
-    // ─────────────────────────────────────────────
     try {
       getIO().to(`conversation:${conversationId}`).emit("newMessage", message);
     } catch (socketError) {
-      // Socket.IO not initialized, or some broadcast issue — log it,
-      // but don't fail the request. The message is already saved.
       console.error("Failed to broadcast message via socket:", socketError);
     }
 
@@ -80,7 +62,6 @@ export const sendMessage = async (req, res) => {
   }
 };
 
-// Fetches message history for a conversation, oldest to newest.
 export const getConversationMessages = async (req, res) => {
   try {
     const userId = req.userId;
@@ -117,9 +98,10 @@ export const getConversationMessages = async (req, res) => {
   }
 };
 
-// Marks a single message as seen by the authenticated user.
-// Uses an upsert-like pattern: only insert if this user hasn't
-// already marked this message as seen (avoids duplicate rows).
+// Marks a single message as seen by the authenticated user, then
+// broadcasts that fact live to everyone else in the conversation —
+// e.g. so the original sender sees a "seen" indicator update without
+// needing to refresh or re-fetch anything.
 export const markMessageSeen = async (req, res) => {
   try {
     const userId = req.userId;
@@ -136,10 +118,43 @@ export const markMessageSeen = async (req, res) => {
       });
     }
 
-    await db.insert(messageSeen).values({
-      messageId: Number(messageId),
-      userId,
+    // We need the message's conversationId to know which room to
+    // broadcast into — the request only gave us a messageId.
+    const message = await db.query.messages.findFirst({
+      where: (m, { eq: eqOp }) => eqOp(m.id, Number(messageId)),
     });
+
+    if (!message) {
+      return res.status(404).json({
+        message: "Message not found",
+      });
+    }
+
+    const isMember = await isConversationMember(message.conversationId, userId);
+
+    if (!isMember) {
+      return res.status(403).json({
+        message: "You are not a member of this conversation",
+      });
+    }
+
+    const [seenRecord] = await db
+      .insert(messageSeen)
+      .values({
+        messageId: Number(messageId),
+        userId,
+      })
+      .returning();
+
+    try {
+      getIO().to(`conversation:${message.conversationId}`).emit("messageSeen", {
+        messageId: seenRecord.messageId,
+        userId: seenRecord.userId,
+        seenAt: seenRecord.seenAt,
+      });
+    } catch (socketError) {
+      console.error("Failed to broadcast messageSeen via socket:", socketError);
+    }
 
     return res.status(201).json({
       message: "Message marked as seen",
