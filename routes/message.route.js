@@ -5,12 +5,12 @@ import {
   markMessageSeen,
 } from "../service/message.service.js";
 import { requireAuth } from "../middlewares/auth.middleware.js";
+import { messageLimiter } from "../middlewares/rateLimit.middleware.js";
 
 export const messageRouter = Router();
 
-// every message route requires a logged-in user
 messageRouter.use(requireAuth);
 
-messageRouter.post("/", sendMessage);
+messageRouter.post("/", messageLimiter, sendMessage);
 messageRouter.get("/:conversationId", getConversationMessages);
 messageRouter.patch("/:messageId/seen", markMessageSeen);
