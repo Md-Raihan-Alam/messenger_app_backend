@@ -29,7 +29,7 @@ const getUserConversationIds = async (userId) => {
 export const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
-      origin: "*", // TODO: restrict this to your actual frontend origin in production
+      origin: "http://localhost:3000", // TODO: update for production frontend URL
       credentials: true,
     },
   });
