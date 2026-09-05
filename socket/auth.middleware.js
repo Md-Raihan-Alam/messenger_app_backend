@@ -1,26 +1,33 @@
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-import * as cookie from "cookie";
 
 dotenv.config();
+
+// Extracts a single cookie's value from a raw "Cookie" header string,
+// e.g. "token=abc123; other=xyz" -> "abc123" for name="token".
+// Avoids pulling in the full `cookie` package just for this one lookup.
+const extractCookieValue = (rawCookieHeader, name) => {
+  const cookies = rawCookieHeader.split(";").map((c) => c.trim());
+
+  for (const c of cookies) {
+    const [key, ...rest] = c.split("=");
+    if (key === name) {
+      return rest.join("=");
+    }
+  }
+
+  return null;
+};
 
 export const socketAuthMiddleware = (socket, next) => {
   try {
     const rawCookieHeader = socket.handshake.headers.cookie;
 
-    console.log("DEBUG raw cookie header:", rawCookieHeader);
-
     if (!rawCookieHeader) {
       return next(new Error("Unauthorized: No cookie provided"));
     }
 
-    const parsedCookies = cookie.parse(rawCookieHeader);
-
-    console.log("DEBUG parsed cookies:", parsedCookies);
-
-    const token = parsedCookies.token;
-
-    console.log("DEBUG extracted token:", token);
+    const token = extractCookieValue(rawCookieHeader, "token");
 
     if (!token) {
       return next(new Error("Unauthorized: No token provided"));
@@ -32,7 +39,6 @@ export const socketAuthMiddleware = (socket, next) => {
 
     next();
   } catch (e) {
-    console.log("DEBUG jwt verify failed:", e.message);
     next(new Error("Unauthorized: Invalid or expired token"));
   }
 };

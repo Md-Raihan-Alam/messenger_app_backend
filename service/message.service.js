@@ -44,15 +44,30 @@ export const sendMessage = async (req, res) => {
       })
       .returning();
 
+    // Fetch the sender's username so both the REST response AND the
+    // socket broadcast have a consistent shape — every message the
+    // frontend receives, whether via fetch or live socket event,
+    // includes `sender: { id, username }`. Without this, only
+    // REST-fetched history had sender info, while live-broadcast
+    // messages didn't, causing a crash on the frontend.
+    const sender = await db.query.users.findFirst({
+      where: (u, { eq: eqOp }) => eqOp(u.id, senderId),
+      columns: { id: true, username: true },
+    });
+
+    const messageWithSender = { ...message, sender };
+
     try {
-      getIO().to(`conversation:${conversationId}`).emit("newMessage", message);
+      getIO()
+        .to(`conversation:${conversationId}`)
+        .emit("newMessage", messageWithSender);
     } catch (socketError) {
       console.error("Failed to broadcast message via socket:", socketError);
     }
 
     return res.status(201).json({
       message: "Message sent successfully",
-      data: message,
+      data: messageWithSender,
     });
   } catch (e) {
     console.error("SEND MESSAGE ERROR:", e);
@@ -61,7 +76,6 @@ export const sendMessage = async (req, res) => {
     });
   }
 };
-
 export const getConversationMessages = async (req, res) => {
   try {
     const userId = req.userId;
