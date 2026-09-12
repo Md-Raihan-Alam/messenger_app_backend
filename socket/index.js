@@ -1,8 +1,8 @@
 import { Server } from "socket.io";
 import { socketAuthMiddleware } from "./auth.middleware.js";
 import { db } from "../db/db.js";
-import { users } from "../schemas/schema.js";
-import { eq } from "drizzle-orm";
+import { users, conversationMembers } from "../schemas/schema.js";
+import { eq, and } from "drizzle-orm";
 
 // Maps a userId to the set of socket.id's currently connected for them.
 // A single user can have multiple simultaneous connections (phone + laptop),
@@ -22,6 +22,19 @@ const getUserConversationIds = async (userId) => {
     where: (cm, { eq: eqOp }) => eqOp(cm.userId, userId),
   });
   return memeberships.map((m) => m.conversationId);
+};
+
+// Confirms a user is actually a member of a conversation before letting
+// their socket broadcast typing events into that conversation's room.
+// Without this, any authenticated user could spam typing indicators
+// into conversations they don't belong to.
+const isConversationMember = async (conversationId, userId) => {
+  const membership = await db.query.conversationMembers.findFirst({
+    where: (cm, { eq: eqOp, and: andOp }) =>
+      andOp(eqOp(cm.conversationId, conversationId), eqOp(cm.userId, userId)),
+  });
+
+  return !!membership;
 };
 
 // Initializes Socket.IO on top of the existing HTTP server.
@@ -92,8 +105,52 @@ export const initSocket = (httpServer) => {
             .where(eq(users.id, userId));
 
           console.log(`User ${userId} is now OFFLINE`);
+
+          // Broadcast to everyone currently connected so any open
+          // conversation with this user can update their status live.
+          // Using io.emit (not io.to(room)) since we don't know in
+          // advance which conversations/clients care about this user.
+          io.emit("userOffline", { userId });
         }
       }
+    });
+
+    // ─────────────────────────────────────────────
+    // TYPING INDICATORS
+    // Unlike every event so far, THIS one originates from the client:
+    // the client calls socket.emit("typing", { conversationId }), and
+    // we listen for it here with socket.on("typing", ...). There is no
+    // REST equivalent and nothing is persisted — this is purely a live,
+    // ephemeral signal re-broadcast to the rest of the room.
+    //
+    // socket.to(room) (as opposed to io.to(room)) broadcasts to everyone
+    // in the room EXCEPT the sender's own socket — the typing user
+    // doesn't need to see their own "is typing" indicator.
+    // ─────────────────────────────────────────────
+    socket.on("typing", async ({ conversationId }) => {
+      const isMember = await isConversationMember(conversationId, userId);
+
+      if (!isMember) {
+        return; // silently ignore — not a member, not their business
+      }
+
+      socket.to(`conversation:${conversationId}`).emit("typing", {
+        conversationId,
+        userId,
+      });
+    });
+
+    socket.on("stopTyping", async ({ conversationId }) => {
+      const isMember = await isConversationMember(conversationId, userId);
+
+      if (!isMember) {
+        return;
+      }
+
+      socket.to(`conversation:${conversationId}`).emit("stopTyping", {
+        conversationId,
+        userId,
+      });
     });
 
     // ─────────────────────────────────────────────
@@ -106,6 +163,7 @@ export const initSocket = (httpServer) => {
     // We join one room per conversation this user belongs to, so that
     // later, `io.to("conversation:7").emit(...)` reaches exactly the
     // members of conversation 7 — no more, no less.
+    // ─────────────────────────────────────────────
     getUserConversationIds(userId)
       .then((conversationIds) => {
         conversationIds.forEach((conversationId) => {
@@ -121,7 +179,7 @@ export const initSocket = (httpServer) => {
         socket.emit("roomsReady");
       })
       .catch((e) => {
-        console.error("Failed to join conversatinr rooms:", e);
+        console.error("Failed to join conversation rooms:", e);
       });
 
     // Only flip the DB flag to "online" on the user's FIRST active socket.
@@ -137,8 +195,10 @@ export const initSocket = (httpServer) => {
         .where(eq(users.id, userId))
         .then(() => {
           console.log(`User ${userId} is now ONLINE`);
-          // NOTE: broadcasting this to other users (e.g. their contacts)
-          // comes in a later milestone once we introduce rooms.
+
+          // Broadcast to everyone currently connected so any open
+          // conversation with this user can update their status live.
+          io.emit("userOnline", { userId });
         })
         .catch((e) => {
           console.error("Failed to mark user online:", e);

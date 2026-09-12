@@ -394,3 +394,45 @@ export const promoteToAdmin = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
+
+// Returns member info (id, username, isOnline) for a conversation —
+// used by the frontend to show, e.g., the other participant's name
+// and online status in a 1-on-1 chat header.
+export const getConversationMembers = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { conversationId } = req.params;
+
+    const requesterMembership = await getMembership(
+      Number(conversationId),
+      userId
+    );
+
+    if (!requesterMembership) {
+      return res.status(403).json({
+        message: "You are not a member of this conversation",
+      });
+    }
+
+    const members = await db.query.conversationMembers.findMany({
+      where: (cm, { eq: eqOp }) => eqOp(cm.conversationId, Number(conversationId)),
+      with: {
+        user: {
+          columns: {
+            id: true,
+            username: true,
+            isOnline: true,
+          },
+        },
+      },
+    });
+
+    return res.status(200).json({
+      members: members.map((m) => ({ ...m.user, role: m.role })),
+    });
+  } catch (e) {
+    console.error("GET CONVERSATION MEMBERS ERROR:", e);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
